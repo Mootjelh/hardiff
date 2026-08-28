@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # 1.21 is the minimum go.mod claims. Testing it keeps that claim true.
+        go: ['1.21', 'stable']
+    env:
+      # Importing net/http enables cgo on macOS, which sends the build through
+      # the external linker. Go 1.21 does not emit an LC_UUID load command on
+      # that path, and the dyld on current arm64 macOS runners refuses to start
+      # such a binary: "missing LC_UUID load command", abort trap. It is a
+      # toolchain and OS incompatibility, not a cgo dependency of this package,
+      # which resolves no hostnames of its own and needs none of it.
+      #
+      # The race job below leaves cgo alone, because -race wants it.
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  race:
+    name: race detector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # The pool is shared between goroutines by design, so this is the job
+      # that matters most here.
+      - run: go test -race -count=5 ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...

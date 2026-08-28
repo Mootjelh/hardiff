@@ -1,0 +1,18 @@
+# Binaries. Anchored to the root: a pattern with no slash matches any path
+# component of that name at any depth, so a bare "hardiff" would also match the
+# cmd/hardiff directory and quietly keep the command out of the repository.
+bin/
+/hardiff
+/hardiff.exe
+*.exe
+*.test
+
+# Go
+testdata/fuzz/
+vendor/
+*.out
+
+# Captures are somebody's session. They carry cookies, tokens and personal data,
+# and they are not ours to publish. Test fixtures are built in code instead.
+*.har
+scratch/
