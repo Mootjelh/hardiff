@@ -304,14 +304,26 @@ func TestDiffJSONBodyReportsFieldsNotTheBlob(t *testing.T) {
 
 // JSON has one number type, so an id arrives as a float and prints in
 // scientific notation unless it is formatted. A capture is mostly ids.
+//
+// The ids here are nine digits on purpose. Go's default float formatting only
+// switches to an exponent above a certain magnitude, so a small number like an
+// amount in cents renders the same either way and would make this test pass
+// against the bug it is here to catch.
 func TestDiffJSONNumbersAreNotScientific(t *testing.T) {
-	a := har(entry("POST", "https://x.test/n", body("application/json", `{"amount":10680}`)))
-	b := har(entry("POST", "https://x.test/n", body("application/json", `{"amount":11550}`)))
+	a := har(entry("POST", "https://x.test/n", body("application/json",
+		`{"systemEventId":1963224601,"amount":10680}`)))
+	b := har(entry("POST", "https://x.test/n", body("application/json",
+		`{"systemEventId":385233540,"amount":11550}`)))
 
 	fields := fieldsFor(t, Diff(a, b, Options{}), Key("POST", "https://x.test/n"))
-	f, ok := find(fields, SectionBody, "amount")
-	if !ok || f.A != "10680" || f.B != "11550" {
-		t.Errorf("amount = %+v, want plain integers", f)
+
+	id, ok := find(fields, SectionBody, "systemEventId")
+	if !ok || id.A != "1963224601" || id.B != "385233540" {
+		t.Errorf("systemEventId = %+v, want the digits rather than an exponent", id)
+	}
+	amount, ok := find(fields, SectionBody, "amount")
+	if !ok || amount.A != "10680" || amount.B != "11550" {
+		t.Errorf("amount = %+v, want plain integers", amount)
 	}
 }
 
