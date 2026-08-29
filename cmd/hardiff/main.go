@@ -2,6 +2,7 @@
 //
 //	hardiff before.har after.har
 //	hardiff -redact before.har after.har
+//	hardiff -host checkout.example.com a.har b.har
 //	hardiff -ignore cookie -ignore user-agent a.har b.har
 //	hardiff -json a.har b.har | jq '.changed[].fields[] | select(.section == "body")'
 //
@@ -28,6 +29,8 @@ func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 func main() {
 	var ignore stringList
 	flag.Var(&ignore, "ignore", "leave out this `header`, case-insensitively. Repeatable")
+	var hosts stringList
+	flag.Var(&hosts, "host", "compare only requests to this `host`, parent domains included. Repeatable")
 	respHeaders := flag.Bool("response-headers", false, "compare response headers too")
 	respBodies := flag.Bool("response-bodies", false, "compare response bodies too")
 	redact := flag.Bool("redact", false, "say which fields differ without printing either value")
@@ -44,6 +47,10 @@ fields differ.
 Requests are matched on method and URL path, with the query string compared as
 a field rather than used to match. Otherwise a cache buster or a request id in
 the query makes every request look like one removed and one added.
+
+A real capture is mostly other people's traffic: payment iframes, consent
+banners and analytics differ on every session id they carry and are never the
+question. Use -host to narrow to the site you are actually looking at.
 
 Nothing is ignored by default, including cookies and tokens. Those differ
 exactly when the difference is the answer. Use -ignore to drop what you have
@@ -74,6 +81,7 @@ flags:
 
 	res := hardiff.Diff(a, b, hardiff.Options{
 		IgnoreHeaders:   ignore,
+		Hosts:           hosts,
 		ResponseHeaders: *respHeaders,
 		ResponseBodies:  *respBodies,
 		Redact:          *redact,

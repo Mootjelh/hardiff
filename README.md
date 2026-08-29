@@ -63,6 +63,35 @@ Anything that is not JSON is compared as text.
 
 A header sent with an empty value and a header not sent at all are different requests, and a lot of the time that difference is the answer. So presence and value are tracked separately, and a missing field prints as `(absent)` rather than as a blank column. Under `-json` it is `null` against `""`.
 
+## A real capture is mostly other people's traffic
+
+The first time this ran on two real 5 MB captures of one checkout flow it found
+what it was built to find, and then printed 105 more requests:
+
+```
+changed requests: 106   total fields: 890
+
+per host
+  checkout.example.com    50
+  www.paypal.com          15
+  3ds.example.com          9
+  apps.rokt.com            7
+  cdn.cookielaw.org        6
+  analytics.google.com     6
+```
+
+Payment iframes, consent banners, analytics and upsell widgets were more than a
+third of it. They differ on every field that carries a session id and none of
+them is ever the question. So narrow to the site you are looking at:
+
+```bash
+hardiff -host checkout.example.com a.har b.har   # 106 changed becomes 50
+```
+
+A host matches exactly, or as a parent domain on a dot boundary, so
+`example.com` also takes `checkout.example.com` and `3ds.example.com` but not
+`notexample.com`. The flag is repeatable.
+
 ## Nothing is ignored by default
 
 The tempting thing is to ship a list of headers that "always differ", and it is worth resisting. Cookies, tokens and user agents differ between two captures exactly when the difference is the point. One capture being signed in and the other not is precisely the sort of thing people fail to notice for a day.
@@ -72,6 +101,12 @@ So the defaults show everything, and you drop what you have already accounted fo
 ```bash
 hardiff -ignore cookie -ignore user-agent a.har b.har
 ```
+
+The one exception is HTTP/2 pseudo-headers. `:path` and `:authority` are
+dropped, because they repeat the method and URL that every difference is already
+printed under. That is the test for whether hiding something is acceptable: a
+cookie can tell you one capture was signed in, a pseudo-header can only repeat
+the address.
 
 Response headers and response bodies are off by default. Those carry a date, a request id and a cache state on almost every response, and the question is usually what was sent. `-response-headers` and `-response-bodies` turn them on.
 

@@ -41,6 +41,34 @@ type Options struct {
 	// MaxValue truncates a printed value. 0 means 120 characters. Bodies and
 	// tokens run to kilobytes and a diff nobody can read is not an answer.
 	MaxValue int
+
+	// Hosts narrows the comparison to requests made to these hosts. Empty means
+	// every host.
+	//
+	// A real capture is mostly other people's traffic. Measured on two 5 MB
+	// recordings of one checkout flow: 106 requests differed, and payment
+	// iframes, consent banners, analytics and upsell widgets were more than a
+	// third of them. They differ on every field carrying a session id and none
+	// of them is ever the question.
+	//
+	// A host matches exactly, or as a parent domain on a dot boundary, so
+	// "example.com" also takes "checkout.example.com" but not "notexample.com".
+	Hosts []string
+}
+
+// wantHost reports whether a request to this host should be compared.
+func (o Options) wantHost(host string) bool {
+	if len(o.Hosts) == 0 {
+		return true
+	}
+	host = strings.ToLower(host)
+	for _, h := range o.Hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
 }
 
 func (o Options) maxValue() int {
@@ -115,6 +143,9 @@ func (r Result) Empty() bool {
 func Diff(a, b *HAR, opts Options) Result {
 	var res Result
 	for _, p := range Match(a, b) {
+		if !opts.wantHost(hostOf(p)) {
+			continue
+		}
 		switch {
 		case p.A == nil:
 			res.OnlyInB = append(res.OnlyInB, p)
@@ -156,6 +187,22 @@ func compare(a, b Entry, opts Options) []Field {
 	return out
 }
 
+// hostOf reads the host from whichever side of the pair is present.
+func hostOf(p Pair) string {
+	e := p.A
+	if e == nil {
+		e = p.B
+	}
+	if e == nil {
+		return ""
+	}
+	u, err := neturl.Parse(e.Request.URL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
 // queryOf reads the query out of the URL rather than trusting queryString.
 //
 // The field is optional in the format and exporters disagree about filling it
@@ -174,9 +221,20 @@ func queryOf(r Request) map[string][]string {
 	return out
 }
 
+// named lowercases header names into a map, dropping HTTP/2 pseudo-headers.
+//
+// Those are the one exception to comparing everything by default, and the
+// reason they are allowed out is the reason cookies are not. The rule is: do
+// not hide what only this field can tell you. ":path" and ":authority" carry
+// nothing that is not already on the line above, since every difference is
+// printed under the method and URL it belongs to. A cookie can tell you one
+// capture was signed in; a pseudo-header can only repeat the address.
 func named(list []NameValue) map[string][]string {
 	out := map[string][]string{}
 	for _, nv := range list {
+		if strings.HasPrefix(nv.Name, ":") {
+			continue
+		}
 		out[strings.ToLower(nv.Name)] = append(out[strings.ToLower(nv.Name)], nv.Value)
 	}
 	return out

@@ -483,3 +483,102 @@ func TestRenderSpellsOutAbsent(t *testing.T) {
 		t.Errorf("out = %q, want an absent field to say so rather than print blank", out)
 	}
 }
+
+// --- narrowing to a host -----------------------------------------------------
+
+func hostHAR() (*HAR, *HAR) {
+	a := har(
+		entry("GET", "https://checkout.example.com/pay", headers("X", "a")),
+		entry("GET", "https://3ds.example.com/verify", headers("X", "a")),
+		entry("GET", "https://analytics.other.test/collect", headers("X", "a")),
+		entry("GET", "https://checkout.example.com/only-a"),
+	)
+	b := har(
+		entry("GET", "https://checkout.example.com/pay", headers("X", "b")),
+		entry("GET", "https://3ds.example.com/verify", headers("X", "b")),
+		entry("GET", "https://analytics.other.test/collect", headers("X", "b")),
+		entry("GET", "https://analytics.other.test/only-b"),
+	)
+	return a, b
+}
+
+func TestHostsNarrowsTheComparison(t *testing.T) {
+	a, b := hostHAR()
+
+	// The control. Without the option everything is compared, so the
+	// assertions below mean the filter worked rather than that the traffic was
+	// never there.
+	all := Diff(a, b, Options{})
+	if len(all.Changed) != 3 || len(all.OnlyInA) != 1 || len(all.OnlyInB) != 1 {
+		t.Fatalf("unfiltered: changed=%d onlyA=%d onlyB=%d, want 3, 1 and 1",
+			len(all.Changed), len(all.OnlyInA), len(all.OnlyInB))
+	}
+
+	res := Diff(a, b, Options{Hosts: []string{"checkout.example.com"}})
+	if len(res.Changed) != 1 {
+		t.Errorf("changed = %d, want 1", len(res.Changed))
+	}
+	// Requests present on one side only are filtered too, or the report is
+	// about a different set of hosts than the one asked for.
+	if len(res.OnlyInA) != 1 || len(res.OnlyInB) != 0 {
+		t.Errorf("onlyA=%d onlyB=%d, want 1 and 0", len(res.OnlyInA), len(res.OnlyInB))
+	}
+}
+
+// A parent domain takes its subdomains, which is what you want when a checkout
+// spreads over several of them.
+func TestHostsMatchesAParentDomain(t *testing.T) {
+	a, b := hostHAR()
+
+	res := Diff(a, b, Options{Hosts: []string{"example.com"}})
+	if len(res.Changed) != 2 {
+		t.Errorf("changed = %d, want 2: example.com should take checkout. and 3ds.", len(res.Changed))
+	}
+	for _, c := range res.Changed {
+		if strings.Contains(c.Key, "other.test") {
+			t.Errorf("an unrelated host got through: %s", c.Key)
+		}
+	}
+}
+
+// Suffix matching has to stop at a dot, or "example.com" would take
+// "notexample.com", which is a different site owned by somebody else.
+func TestHostsDoesNotMatchASuffixMidLabel(t *testing.T) {
+	a := har(entry("GET", "https://notexample.com/x", headers("X", "a")))
+	b := har(entry("GET", "https://notexample.com/x", headers("X", "b")))
+
+	if res := Diff(a, b, Options{Hosts: []string{"example.com"}}); !res.Empty() {
+		t.Errorf("notexample.com matched the filter example.com: %+v", res.Changed)
+	}
+}
+
+func TestHostsEmptyMeansEveryHost(t *testing.T) {
+	a, b := hostHAR()
+	full := Diff(a, b, Options{})
+	none := Diff(a, b, Options{Hosts: nil})
+	if len(full.Changed) != len(none.Changed) {
+		t.Errorf("an empty host list changed the result: %d vs %d", len(full.Changed), len(none.Changed))
+	}
+}
+
+func TestHostsIsCaseInsensitive(t *testing.T) {
+	a := har(entry("GET", "https://Checkout.Example.COM/x", headers("X", "a")))
+	b := har(entry("GET", "https://Checkout.Example.COM/x", headers("X", "b")))
+
+	if res := Diff(a, b, Options{Hosts: []string{"checkout.example.com"}}); res.Empty() {
+		t.Error("a host differing only in case was filtered out")
+	}
+}
+
+// HTTP/2 pseudo-headers repeat the request line, which is already printed above
+// every difference. They are the one thing dropped by default, and the reason
+// is the reason cookies are not: they cannot tell you anything on their own.
+func TestPseudoHeadersAreNotCompared(t *testing.T) {
+	a := har(entry("GET", "https://x.test/a", headers(":path", "/a?v=1", ":authority", "x.test", "X-Real", "a")))
+	b := har(entry("GET", "https://x.test/a", headers(":path", "/a?v=2", ":authority", "x.test", "X-Real", "b")))
+
+	fields := fieldsFor(t, Diff(a, b, Options{}), Key("GET", "https://x.test/a"))
+	if len(fields) != 1 || fields[0].Name != "x-real" {
+		t.Errorf("fields = %+v, want only the real header", fields)
+	}
+}
